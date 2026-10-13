@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>図書貸出管理アプリ</title>
+  <style>
+    body {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    .hidden { display: none; }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input, select, button {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover { background-color: #0056b3; }
+    .btn-danger {
+      background-color: #dc3545;
+      width: auto;
+      padding: 5px 10px;
+    }
+    .btn-danger:hover { background-color: #bd2130; }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: left;
+    }
+    th { background-color: #f2f2f2; }
+    .status-badge {
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 0.85em;
+    }
+    .status-unreturned { background-color: #ffeebd; color: #856404; }
+    .status-returned { background-color: #d4edda; color: #155724; }
+  </style>
+</head>
+<body>
+
+  <!-- ログイン前画面 -->
+  <div id="login-view" class="card">
+    <h2>図書貸出管理アプリ</h2>
+    <p>利用を開始するにはGoogleアカウントでログインしてください。</p>
+    <button id="login-btn">Googleでログイン</button>
+  </div>
+
+  <!-- ログイン後画面 -->
+  <div id="app-view" class="hidden">
+    <div class="card header">
+      <span id="user-info"></span>
+      <button id="logout-btn" style="width: auto;">ログアウト</button>
+    </div>
+
+    <!-- 登録フォーム -->
+    <div class="card">
+      <h3>新規貸出登録</h3>
+      <form id="loan-form">
+        <div class="form-group">
+          <label for="bookTitle">書名</label>
+          <input type="text" id="bookTitle" required placeholder="例: 吾輩は猫である">
+        </div>
+        <div class="form-group">
+          <label for="borrowerName">借りた人の名前</label>
+          <input type="text" id="borrowerName" required placeholder="例: 山田太郎">
+        </div>
+        <div class="form-group">
+          <label for="loanDate">貸出日</label>
+          <input type="date" id="loanDate" required>
+        </div>
+        <div class="form-group">
+          <label for="returnDueDate">返却予定日</label>
+          <input type="date" id="returnDueDate" required>
+        </div>
+        <div class="form-group">
+          <label for="status">返却状況</label>
+          <select id="status" required>
+            <option value="未返却">未返却</option>
+            <option value="返却済み">返却済み</option>
+          </select>
+        </div>
+        <button type="submit">登録</button>
+      </form>
+    </div>
+
+    <!-- 貸出一覧 -->
+    <div class="card">
+      <h3>貸出一覧</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>書名</th>
+            <th>借りた人</th>
+            <th>貸出日</th>
+            <th>返却予定日</th>
+            <th>状況</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="loan-list">
+          <!-- データがここに動的追加されます -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Firebase SDK (v10 Modular) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { 
+      getAuth, 
+      signInWithPopup, 
+      GoogleAuthProvider, 
+      signOut, 
+      onAuthStateChanged 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { 
+      getFirestore, 
+      collection, 
+      addDoc, 
+      onSnapshot, 
+      query, 
+      orderBy, 
+      doc, 
+      deleteDoc,
+      updateDoc,
+      serverTimestamp 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // Firebase設定
+    const firebaseConfig = {
+      apiKey: "AIzaSyCwBSMu2rHcVlXwGa3py6Li1XvqkGMqYSU",
+      authDomain: "libraryapp-97799.firebaseapp.com",
+      projectId: "libraryapp-97799",
+      storageBucket: "libraryapp-97799.firebasestorage.app",
+      messagingSenderId: "1036105346122",
+      appId: "1:1036105346122:web:c96d97e5b0bea654888ab3"
+    };
+
+    // 初期化
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+
+    // DOM要素
+    const loginView = document.getElementById('login-view');
+    const appView = document.getElementById('app-view');
+    const loginBtn = document.getElementById('login-btn');
+    const logoutBtn = document.getElementById('logout-btn');
+    const userInfo = document.getElementById('user-info');
+    const loanForm = document.getElementById('loan-form');
+    const loanList = document.getElementById('loan-list');
+
+    // ログイン処理
+    loginBtn.addEventListener('click', () => {
+      signInWithPopup(auth, provider).catch(error => {
+        alert("ログインエラー: " + error.message);
+      });
+    });
+
+    // ログアウト処理
+    logoutBtn.addEventListener('click', () => {
+      signOut(auth);
+    });
+
+    // 認証状態の監視 (要件1: ログインしないと使えない画面)
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        loginView.classList.add('hidden');
+        appView.classList.remove('hidden');
+        userInfo.textContent = `${user.displayName} さんでログイン中`;
+        loadLoans(); // ログイン後にデータ読み込み
+      } else {
+        loginView.classList.remove('hidden');
+        appView.classList.add('hidden');
+        loanList.innerHTML = '';
+      }
+    });
+
+    // 登録処理 (要件2・4: データ保存)
+    loanForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const newLoan = {
+        bookTitle: document.getElementById('bookTitle').value,
+        borrowerName: document.getElementById('borrowerName').value,
+        loanDate: document.getElementById('loanDate').value,
+        returnDueDate: document.getElementById('returnDueDate').value,
+        status: document.getElementById('status').value,
+        createdAt: serverTimestamp()
+      };
+
+      try {
+        await addDoc(collection(db, "loans"), newLoan);
+        loanForm.reset();
+        // 本日の日付をデフォルト設定したい場合はここで再設定可能
+      } catch (error) {
+        console.error("保存失敗: ", error);
+        alert("データの保存に失敗しました。");
+      }
+    });
+
+    // 一覧表示・リアルタイム同期 (要件3: 再読み込みしても消えない)
+    function loadLoans() {
+      const q = query(collection(db, "loans"), orderBy("createdAt", "desc"));
+      
+      onSnapshot(q, (snapshot) => {
+        loanList.innerHTML = '';
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const id = docSnap.id;
+          
+          const tr = document.createElement('tr');
+          const isReturned = data.status === '返却済み';
+          const badgeClass = isReturned ? 'status-returned' : 'status-unreturned';
+
+          tr.innerHTML = `
+            <td>${escapeHtml(data.bookTitle)}</td>
+            <td>${escapeHtml(data.borrowerName)}</td>
+            <td>${data.loanDate}</td>
+            <td>${data.returnDueDate}</td>
+            <td><span class="status-badge ${badgeClass}">${data.status}</span></td>
+            <td>
+              <button class="btn-toggle" onclick="toggleStatus('${id}', '${data.status}')">
+                ${isReturned ? '未返却に戻す' : '返却済みにする'}
+              </button>
+              <button class="btn-danger" onclick="deleteLoan('${id}')">削除</button>
+            </td>
+          `;
+          loanList.appendChild(tr);
+        });
+      });
+    }
+
+    // ステータス切替ヘルパー
+    window.toggleStatus = async (id, currentStatus) => {
+      const newStatus = currentStatus === '返却済み' ? '未返却' : '返却済み';
+      await updateDoc(doc(db, "loans", id), { status: newStatus });
+    };
+
+    // 削除ヘルパー
+    window.deleteLoan = async (id) => {
+      if (confirm('この記録を削除しますか？')) {
+        await deleteDoc(doc(db, "loans", id));
+      }
+    };
+
+    // XSS対策用HTMLエスケープ
+    function escapeHtml(str) {
+      return str.replace(/[&< me"']/g, (m) => {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+      });
+    }
+
+    // 日付選択の初期値を今日にする
+    document.getElementById('loanDate').valueAsDate = new Date();
+  </script>
+</body>
+</html>
